@@ -1,7 +1,6 @@
-
 #include <Arduino.h>
 #include <stdio.h>
-#include <wire.h>
+#include <Wire.h>
 
 // === CONFIGURATION PINS ===
 const byte pinA = D5;         // Encodeur canal A
@@ -9,27 +8,25 @@ const byte pinB = D6;         // Encodeur canal B
 const byte pwm_pin = D1;      // PWM vers driver moteur
 const byte dir_pin = D2;      // Direction moteur
 
+// === PARAMETRES DE L'ESP8266 ===
+const int pwm_max = 256;          // Résolution PWM ESP8266
+
 // === PARAMÈTRES DU MOTEUR & DE COMMANDE ===
-const float gamma_max = 0.6;      // Couple max (N·m)
-const float epsilon_u = 8.0;      // Coefficient de conversion : V/N·m
-const float V_max = 12.0;         // Tension d’alim max (V)
-const int pwm_max = 1023;         // Résolution PWM ESP8266
+const float gamma_max = 0.2;      // Couple max (N·m)
+const float epsilon_u = 16.5;     // Coefficient de conversion : V/N·m
 
 // === PARAMÈTRES D’ENCODEUR ===
 const int ticks_per_rev = 1000;   // Ticks par révolution
 const float angle_per_tick = 2 * M_PI / ticks_per_rev;
 
+// === MATRICE DE GAIN ===
+float k1 = 14.5;
+float k2 = 2.0;
+
 // === VARIABLES D’ÉTAT ===
 volatile long encoder_ticks = 0;
 float theta = 0.0;
 float dtheta = 0.0;
-
-// === INTERNE POUR DERIVÉE ===
-float dtheta_prev = 0.0;
-
-// === MATRICE DE GAIN ===
-float k1 = 14.5;
-float k2 = 2.0;
 
 // === INTERRUPTIONS ===
 void IRAM_ATTR handle_encoder() {
@@ -75,9 +72,6 @@ void update_encoder() {
 float compute_command(float theta, float dtheta) {
   const float tol_theta = 9.0 * M_PI / 10.0;
 
-  float ddtheta = dtheta - dtheta_prev;
-  dtheta_prev = dtheta;
-
   float gamma = 0.0;
 
   if (fabs(theta - M_PI) < tol_theta) {
@@ -100,9 +94,8 @@ float compute_command(float theta, float dtheta) {
 // === COMMANDE MOTEUR ===
 void set_motor(float gamma) {
   float epsilon = gamma * epsilon_u;             // Convertir couple en tension
-  epsilon = constrain(epsilon, -V_max, V_max);   // Saturation tension
 
-  int pwm_val = (int)(fabs(epsilon) / V_max * pwm_max);
+  int pwm_val = (int)(fabs(epsilon) / 3.3 * pwm_max);
   pwm_val = constrain(pwm_val, 0, pwm_max);
 
   digitalWrite(dir_pin, epsilon >= 0 ? HIGH : LOW);
