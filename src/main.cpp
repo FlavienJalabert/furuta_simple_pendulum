@@ -8,20 +8,23 @@ const byte pinB = D6;         // Encodeur canal B
 const byte pwm_pin = D1;      // PWM vers driver moteur
 const byte dir_pin = D2;      // Direction moteur
 
-// === PARAMETRES DE L'ESP8266 ===
-const int pwm_max = 256;          // Résolution PWM ESP8266
-
 // === PARAMÈTRES DU MOTEUR & DE COMMANDE ===
-const float gamma_max = 0.2;      // Couple max (N·m)
-const float epsilon_u = 16.5;     // Coefficient de conversion : V/N·m
+const float gamma_max = 0.2;               // Couple max du moteur (N·m)
+const float threshold = 9.0 * M_PI / 10.0; // Seuil de basculement en linéaire (rad)
+const float tol_dtheta = 0.2;              // Tolérance de vitesse (rad/s)
 
 // === PARAMÈTRES D’ENCODEUR ===
 const int ticks_per_rev = 1000;   // Ticks par révolution
 const float angle_per_tick = 2 * M_PI / ticks_per_rev;
 
 // === MATRICE DE GAIN ===
-float k1 = 14.5;
-float k2 = 2.0;
+float k1 = 14.5; // gain proportionnel
+float k2 = 2.0;  // gain dérivé
+
+// === PARAMÈTRES DE L'ESP8266 ===
+const int pwm_max = 256;                   // Résolution PWM ESP8266
+const float V_Max = 3.3;                   // Tension maximum de ESP8266
+const float epsilon_u = V_Max / gamma_max; // Coefficient de conversion (V/N·m)
 
 // === VARIABLES D’ÉTAT ===
 volatile long encoder_ticks = 0;
@@ -70,22 +73,23 @@ void update_encoder() {
 
 // === STRATÉGIE DE COMMANDE ===
 float compute_command(float theta, float dtheta) {
-  const float tol_theta = 9.0 * M_PI / 10.0;
+  float theta_vu = fmod(theta + M_PI, 2 * M_PI) - M_PI;
+  float gamma = 0;
 
-  float gamma = 0.0;
-
-  if (fabs(theta - M_PI) < tol_theta) {
-    // Phase de stabilisation linéaire
-    gamma = -k1 * (theta - copysign(M_PI, theta)) - k2 * dtheta;
-  }
-  else {
-    // Phase bang-bang
-    gamma = (dtheta >= 0) ? gamma_max : -gamma_max;
-  }
-
-  // Saturation du couple
-  if (fabs(gamma) > gamma_max) {
-    gamma = copysign(gamma_max, gamma);
+  if (fabs(theta_vu) < threshold) {
+    // Swing Up
+    if (fabs(dtheta) < tol_dtheta && fabs(theta_vu) < 0.1) {
+      // impulsion de départ
+      gamma = gamma_max;
+    }
+    if (fabs(dtheta) > tol_dtheta) {
+      // Commande Bang-Bang
+      gamma = copysign(gamma_max, dtheta);
+    }
+  } else {
+    // Commande linéaire
+    float theta_error = fmod(theta, 2 * M_PI) - M_PI;
+    gamma = - k1 * theta_error - k2 * dtheta;
   }
 
   return gamma;
@@ -93,9 +97,9 @@ float compute_command(float theta, float dtheta) {
 
 // === COMMANDE MOTEUR ===
 void set_motor(float gamma) {
-  float epsilon = gamma * epsilon_u;             // Convertir couple en tension
+  float epsilon = gamma * epsilon_u; // Convertir couple en tension
 
-  int pwm_val = (int)(fabs(epsilon) / 3.3 * pwm_max);
+  int pwm_val = (int)(fabs(epsilon) / V_Max * pwm_max);
   pwm_val = constrain(pwm_val, 0, pwm_max);
 
   digitalWrite(dir_pin, epsilon >= 0 ? HIGH : LOW);
@@ -107,7 +111,7 @@ void loop() {
   static unsigned long last_time = 0;
   unsigned long now = millis();
 
-  if (now - last_time >= 10) {  // 100 Hz
+  if (now - last_time >= 1) {  // 1000 Hz
     last_time = now;
 
     update_encoder();                               // calculer theta et dtheta
@@ -120,6 +124,6 @@ void loop() {
     Serial.print("\t dtheta (rad/s): ");
     Serial.print(dtheta, 3);
     Serial.print("\t gamma (N·m): ");
-    Serial.println(gamma, 3);
+    Serial.println(gamma, 5);
   }
 }
